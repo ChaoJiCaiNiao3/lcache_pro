@@ -6,9 +6,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/envoyproxy/go-control-plane/pkg/server/v3"
 	"github.com/sirupsen/logrus"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // Config 定义etcd客户端配置
@@ -114,12 +113,4 @@ func PutEtcdConHashNodeCount(cli *clientv3.Client, addr string, count int64) err
 	}
 	logrus.Infof("PutEtcdConHashNodeCount: %s %d", addr, count)
 	return nil
-}
-
-func RegisterPeersToServer(picker *peers.ClientPicker, server *server.Server) {
-	server.clientPicker = picker
-}
-
-func RegisterGroupToServer(server *server.Server, group *group.Group) {
-	server.groups = group
 }

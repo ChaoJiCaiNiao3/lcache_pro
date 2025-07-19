@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ChaoJiCaiNiao3/lcache_pro/registry"
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/sirupsen/logrus"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
 // Map 一致性哈希实现
@@ -96,7 +97,6 @@ func (m *Map) RunElection() error {
 			fmt.Println("新 leader:", string(resp.Kvs[0].Value))
 		}
 		cancel()
-		session.Close()
 		time.Sleep(time.Second)
 	}
 }
@@ -120,7 +120,10 @@ func (m *Map) fetchAllNodeCount(ctx context.Context) error {
 
 	for _, kv := range resp.Kvs {
 		addr := strings.TrimPrefix(string(kv.Key), "/conhashNodeCount/")
-		count := string(kv.Value)
+		count, err := strconv.ParseInt(string(kv.Value), 10, 64)
+		if err != nil {
+			return err
+		}
 		m.nodeCounts[addr] = count
 	}
 	return nil
@@ -129,9 +132,12 @@ func (m *Map) fetchAllNodeCount(ctx context.Context) error {
 func (m *Map) watchNodeCount(ctx context.Context) error {
 	watchCh := m.etcdCli.Watch(ctx, "/conhashNodeCount/", clientv3.WithPrefix())
 	for resp := range watchCh {
-		for _, kv := range resp.Kvs {
-			addr := strings.TrimPrefix(string(kv.Key), "/conhashNodeCount/")
-			count := string(kv.Value)
+		for _, event := range resp.Events {
+			addr := strings.TrimPrefix(string(event.Kv.Key), "/conhashNodeCount/")
+			count, err := strconv.ParseInt(string(event.Kv.Value), 10, 64)
+			if err != nil {
+				return err
+			}
 			m.nodeCounts[addr] = count
 		}
 	}
@@ -156,15 +162,14 @@ func (m *Map) CheckAndRebalanceAndSyncHashRing(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
 }
 
 func (m *Map) updateHashRing(ctx context.Context) error {
 	watchCh := m.etcdCli.Watch(ctx, "/consistenthash/hashring", clientv3.WithPrefix())
 	for resp := range watchCh {
-		for _, kv := range resp.Kvs {
+		for _, event := range resp.Events {
 			hashRing := HashRing{}
-			json.Unmarshal(kv.Value, &hashRing)
+			json.Unmarshal(event.Kv.Value, &hashRing)
 			m.mu.Lock()
 			m.keys = hashRing.Keys
 			m.hashMap = hashRing.HashMap
@@ -180,7 +185,8 @@ func (m *Map) syncHashRing() error {
 		Keys:    m.keys,
 		HashMap: m.hashMap,
 	}
-	m.etcdCli.Put(context.Background(), "/consistenthash/hashring", hashRing)
+	hashRingData, _ := json.Marshal(hashRing)
+	m.etcdCli.Put(context.Background(), "/consistenthash/hashring", string(hashRingData))
 	//把所有的nodeCount都设置为0
 	for addr := range m.nodeCounts {
 		m.nodeCounts[addr] = 0

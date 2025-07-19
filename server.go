@@ -7,7 +7,6 @@ import (
 
 	pb "github.com/ChaoJiCaiNiao3/lcache_pro/pb"
 	"github.com/ChaoJiCaiNiao3/lcache_pro/registry"
-	"github.com/ChaoJiCaiNiao3/lcache_pro/store"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -74,21 +73,32 @@ func (s *Server) Stop() error {
 	return nil
 }
 
-func (s *Server) Get(key string) (store.Value, bool, error) {
-	peer, ok, self := s.clientPicker.PickPeer(key)
+func RegisterPeersToServer(picker *ClientPicker, server *Server) {
+	server.clientPicker = picker
+}
+
+func RegisterGroupToServer(server *Server, group *Group) {
+	server.groups = group
+}
+
+func (s *Server) Get(ctx context.Context, req *pb.Request) (*pb.ResponseForGet, error) {
+	peer, ok, self := s.clientPicker.PickPeer(req.Key)
 	if !ok || peer == "" {
-		return nil, false, fmt.Errorf("failed to pick peer")
+		return nil, fmt.Errorf("failed to pick peer")
 	}
 	if self {
-		value, ok := s.groups.cache.Get(key)
-		return value, ok, nil
+		value, ok := s.groups.cache.Get(req.Key)
+		if !ok {
+			return &pb.ResponseForGet{Value: nil}, nil
+		}
+		return &pb.ResponseForGet{Value: value.(ByteView)}, nil
 	} else {
 		//从哈希环对应节点拿
-		resp, err := s.clientPicker.grpcCli[peer].Get(context.Background(), &pb.Request{Key: key})
+		resp, err := s.clientPicker.grpcCli[peer].Get(context.Background(), req)
 		if err != nil {
-			return nil, false, fmt.Errorf("failed to get: %v", err)
+			return nil, fmt.Errorf("failed to get: %v", err)
 		}
-		return ByteView(resp.Value), true, nil
+		return resp, nil
 	}
 }
 

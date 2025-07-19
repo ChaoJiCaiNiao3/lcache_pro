@@ -8,8 +8,8 @@ import (
 	"github.com/ChaoJiCaiNiao3/lcache_pro/consistenthash"
 	pb "github.com/ChaoJiCaiNiao3/lcache_pro/pb"
 	"github.com/ChaoJiCaiNiao3/lcache_pro/registry"
-	"github.com/coreos/etcd/clientv3"
 	"github.com/sirupsen/logrus"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
