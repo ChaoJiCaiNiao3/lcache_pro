@@ -71,6 +71,7 @@ func NewConsistentHash(opts ...Option) *Map {
 	}()
 	//etcdClient发起竞选
 	go m.RunElection()
+	return m
 }
 
 func (m *Map) RunElection() error {
@@ -110,6 +111,7 @@ func (m *Map) updateNodeCount(ctx context.Context) error {
 
 	//启动增量更新
 	go m.watchNodeCount(ctx)
+	return nil
 }
 
 func (m *Map) fetchAllNodeCount(ctx context.Context) error {
