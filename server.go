@@ -7,6 +7,7 @@ import (
 
 	pb "github.com/ChaoJiCaiNiao3/lcache_pro/pb"
 	"github.com/ChaoJiCaiNiao3/lcache_pro/registry"
+	"github.com/ChaoJiCaiNiao3/lcache_pro/singleflight"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -20,14 +21,16 @@ type Server struct {
 	clientPicker *ClientPicker //节点选择器，用来返回到底要哪个节点
 	groups       *Group        //缓存组，用来管理缓存
 	stopCh       chan struct{} //停止信号
+	singleflight *singleflight.Group
 }
 
 func NewServer(selfAddr string, svcName string) *Server {
 	stopCh := make(chan struct{})
 	return &Server{
-		svcName:  svcName,
-		selfAddr: selfAddr,
-		stopCh:   stopCh,
+		svcName:      svcName,
+		selfAddr:     selfAddr,
+		stopCh:       stopCh,
+		singleflight: &singleflight.Group{},
 	}
 }
 
@@ -87,7 +90,7 @@ func (s *Server) Get(ctx context.Context, req *pb.Request) (*pb.ResponseForGet, 
 		}
 		return &pb.ResponseForGet{Value: value.(ByteView)}, nil
 	} else {
-		//从哈希环对应节点拿
+		//单飞从远程节点拿
 		resp, err := s.clientPicker.grpcCli[peer].Get(context.Background(), req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get: %v", err)
