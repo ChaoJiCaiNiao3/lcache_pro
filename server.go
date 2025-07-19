@@ -13,12 +13,6 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
-type ByteView []byte
-
-func (v ByteView) Len() int {
-	return len(v)
-}
-
 type Server struct {
 	pb.UnimplementedLcacheProServer
 	svcName      string        //服务名称
