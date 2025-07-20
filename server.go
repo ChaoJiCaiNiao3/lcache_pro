@@ -1,10 +1,12 @@
 package lcache_pro
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
 
+	"github.com/ChaoJiCaiNiao3/lcache_pro/database"
 	pb "github.com/ChaoJiCaiNiao3/lcache_pro/pb"
 	"github.com/ChaoJiCaiNiao3/lcache_pro/registry"
 	"github.com/ChaoJiCaiNiao3/lcache_pro/singleflight"
@@ -22,15 +24,18 @@ type Server struct {
 	groups       *Group        //缓存组，用来管理缓存
 	stopCh       chan struct{} //停止信号
 	singleflight *singleflight.Group
+	redis        *database.Redis
 }
 
 func NewServer(selfAddr string, svcName string) *Server {
 	stopCh := make(chan struct{})
+	redis := database.NewRedis(database.DefaultConfig)
 	return &Server{
 		svcName:      svcName,
 		selfAddr:     selfAddr,
 		stopCh:       stopCh,
 		singleflight: &singleflight.Group{},
+		redis:        redis,
 	}
 }
 
@@ -86,25 +91,86 @@ func (s *Server) Get(ctx context.Context, req *pb.Request) (*pb.ResponseForGet, 
 	if self {
 		value, ok := s.groups.cache.Get(req.Key)
 		if !ok {
-			return &pb.ResponseForGet{Value: nil}, nil
+			//没找到，那么从数据库拿
+			value, err := s.redis.Get(req.Key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get: %v", err)
+			}
+			s.groups.cache.Set(req.Key, ByteView(value))
+			return &pb.ResponseForGet{Value: ByteView(value)}, nil
 		}
 		return &pb.ResponseForGet{Value: value.(ByteView)}, nil
 	} else {
 		//单飞从远程节点拿
-		resp, err := s.clientPicker.grpcCli[peer].Get(context.Background(), req)
+		value, err := s.singleflight.Do(req.Key, func() (interface{}, error) {
+			resp, err := s.clientPicker.grpcCli[peer].Get(context.Background(), req)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get: %v", err)
+			}
+			return resp, nil
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get: %v", err)
 		}
-		return resp, nil
+		return value.(*pb.ResponseForGet), nil
 	}
 }
 
 func (s *Server) Set(ctx context.Context, req *pb.Request) (*pb.ResponseForGet, error) {
-	// TODO: 实现 Set 逻辑
-	return nil, fmt.Errorf("Set not implemented")
+	//先寻找节点
+	peer, ok, self := s.clientPicker.PickPeer(req.Key)
+	if !ok || peer == "" {
+		return nil, fmt.Errorf("failed to pick peer")
+	}
+	if self {
+		s.redis.Set(req.Key, string(req.Value))
+		s.groups.cache.Delete(req.Key)
+	} else {
+		s.clientPicker.grpcCli[peer].Set(context.Background(), req)
+	}
+	return &pb.ResponseForGet{Value: ByteView(req.Value)}, nil
 }
 
 func (s *Server) Delete(ctx context.Context, req *pb.Request) (*pb.ResponseForDelete, error) {
-	// TODO: 实现 Delete 逻辑
-	return nil, fmt.Errorf("Delete not implemented")
+	peer, ok, self := s.clientPicker.PickPeer(req.Key)
+	if !ok || peer == "" {
+		return nil, fmt.Errorf("failed to pick peer")
+	}
+	if self {
+		s.redis.Delete(req.Key)
+		s.groups.cache.Delete(req.Key)
+	} else {
+		s.clientPicker.grpcCli[peer].Delete(context.Background(), req)
+	}
+	return &pb.ResponseForDelete{Value: true}, nil
+}
+
+// 设置热点数据时使用的函数
+func (s *Server) SetToCache(key string, value ByteView) error {
+	return s.groups.cache.Set(key, value)
+}
+
+// 封装grpc服务
+func (s *Server) SetToCacheAndRedis(key string, value ByteView) error {
+	flag, err := s.Set(context.Background(), &pb.Request{Key: key, Value: value})
+	if err != nil || bytes.Equal(flag.Value, []byte{}) {
+		return fmt.Errorf("failed to set: %v", err)
+	}
+	return nil
+}
+
+func (s *Server) DeleteCacheAndRedis(key string) error {
+	flag, err := s.Delete(context.Background(), &pb.Request{Key: key})
+	if err != nil || !flag.Value {
+		return fmt.Errorf("failed to delete: %v", err)
+	}
+	return nil
+}
+
+func (s *Server) GetFromCacheAndRedis(key string) (ByteView, error) {
+	value, err := s.Get(context.Background(), &pb.Request{Key: key})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get: %v", err)
+	}
+	return value.Value, nil
 }
