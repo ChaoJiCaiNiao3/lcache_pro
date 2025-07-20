@@ -112,12 +112,12 @@ func (m *Map) RunElection(ctx context.Context) error {
 				return ctx.Err()
 			case resp, ok := <-ch:
 				if !ok {
+					time.Sleep(time.Second * 2)
 					break
 				}
 				fmt.Println("新 leader:", string(resp.Kvs[0].Value))
 			}
 		}
-		time.Sleep(time.Second)
 	}
 }
 
