@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ChaoJiCaiNiao3/lcache_pro/registry"
@@ -27,6 +28,8 @@ type Map struct {
 	hashMap map[int]string
 	// 节点到虚拟节点数量的映射
 	nodeReplicas map[string]int
+	//自己的负载
+	selfLoad int64
 	// 节点负载统计
 	nodeCounts map[string]int64
 	//etcd相关
@@ -43,15 +46,20 @@ type HashRing struct {
 }
 
 // New 创建一致性哈希实例
-func NewConsistentHash(opts ...Option) *Map {
+func NewConsistentHash(selfAddr string, opts ...Option) *Map {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Map{
 		config:       DefaultConfig,
 		hashMap:      make(map[int]string),
 		nodeReplicas: make(map[string]int),
 		nodeCounts:   make(map[string]int64),
+		selfLoad:     0,
 		ctx:          ctx,
 		cancel:       cancel,
+		selfAddr:     selfAddr,
+		etcdCli:      nil,
+		keys:         make([]int, 0),
+		mu:           sync.RWMutex{},
 	}
 
 	for _, opt := range opts {
@@ -76,7 +84,7 @@ func NewConsistentHash(opts ...Option) *Map {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				registry.PutEtcdConHashNodeCount(m.etcdCli, m.selfAddr, m.nodeCounts[m.selfAddr])
+				registry.PutEtcdConHashNodeCount(m.etcdCli, m.selfAddr, m.selfLoad)
 			}
 		}
 	}()
@@ -97,15 +105,16 @@ func (m *Map) RunElection(ctx context.Context) error {
 		//竞选
 		err = election.Campaign(cctx, m.selfAddr)
 		if err == nil {
-			//成为领导了，进行nodeCount的更新和哈希环同步
+			//成为领导了，进行nodeCount的更新和哈希环同步(只有挂了才会换人，所有不会进入下一个for循环,所以不需要cancel)
 			go m.updateNodeCount(ctx)
 			go m.CheckAndRebalanceAndSyncHashRing(ctx)
 			cancel()
 			return nil
 		} else {
 			//竞选失败,监听领导者的变化并同步哈希环
-			ch := election.Observe(ctx)
-			go m.updateHashRing(ctx)
+			cctx, cancel = context.WithCancel(ctx)
+			ch := election.Observe(cctx)
+			go m.updateHashRing(cctx)
 			for {
 				select {
 				case <-ctx.Done():
@@ -114,6 +123,7 @@ func (m *Map) RunElection(ctx context.Context) error {
 				case resp, ok := <-ch:
 					if !ok {
 						time.Sleep(time.Second * 2)
+						cancel()
 						break
 					}
 					fmt.Println("新 leader:", string(resp.Kvs[0].Value))
@@ -298,7 +308,9 @@ func (m *Map) Get(key string) string {
 	if index == len(m.keys) {
 		index = 0
 	}
-
+	if m.hashMap[m.keys[index]] == m.selfAddr {
+		atomic.AddInt64(&m.selfLoad, 1)
+	}
 	return m.hashMap[m.keys[index]]
 }
 

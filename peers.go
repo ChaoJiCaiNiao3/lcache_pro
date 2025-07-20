@@ -44,7 +44,7 @@ type PickerOption func(*ClientPicker)
 func NewClientPicker(selfAddr string, svcName string, consHash *consistenthash.Map, opts ...PickerOption) (*ClientPicker, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	if consHash == nil {
-		consHash = consistenthash.NewConsistentHash()
+		consHash = consistenthash.NewConsistentHash(selfAddr)
 	}
 	picker := &ClientPicker{
 		selfAddr: selfAddr,
@@ -105,7 +105,8 @@ func (p *ClientPicker) fetchAllServices() error {
 
 	for _, kv := range resp.Kvs {
 		addr := string(kv.Value)
-		if addr != "" {
+		if addr != "" && addr != p.selfAddr {
+			fmt.Println("add service: ", addr)
 			p.consHash.Add(addr)
 			//连接grpc
 			grpcCli, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -144,7 +145,7 @@ func (p *ClientPicker) handleWatchEvents(events []*clientv3.Event) {
 		switch ev.Type {
 		case clientv3.EventTypePut:
 			addr := string(ev.Kv.Value)
-			if addr != "" {
+			if addr != "" && addr != p.selfAddr {
 				//连接grpc
 				grpcCli, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 				if err != nil {
@@ -156,13 +157,15 @@ func (p *ClientPicker) handleWatchEvents(events []*clientv3.Event) {
 					grpcCli.Close()
 				}()
 				p.grpcCli[addr] = pb.NewLcacheProClient(grpcCli)
+				fmt.Println("add service: ", addr)
 				p.consHash.Add(addr)
 				logrus.Infof("added service: %s", addr)
 			}
 		case clientv3.EventTypeDelete:
 			addr := string(ev.Kv.Key)
-			if addr != "" {
+			if addr != "" && addr != p.selfAddr {
 				delete(p.grpcCli, addr)
+				fmt.Println("remove service: ", addr)
 				p.consHash.Remove(addr)
 				logrus.Infof("removed service: %s", addr)
 			}

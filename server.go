@@ -37,6 +37,9 @@ func NewServer(selfAddr string, svcName string) *Server {
 		stopCh:       stopCh,
 		singleflight: &singleflight.Group{},
 		redis:        redis,
+		grpcServer:   nil,
+		clientPicker: nil,
+		groups:       nil,
 	}
 }
 
@@ -49,6 +52,8 @@ func (s *Server) Start() error {
 	}
 	//注册服务
 	registry.Register(s.svcName, s.selfAddr, s.stopCh)
+	//把自己写到哈希环中
+	s.clientPicker.consHash.Add(s.selfAddr)
 
 	//发起grpc监听
 	lis, err := net.Listen("tcp", s.selfAddr)
@@ -56,6 +61,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to listen: %v", err)
 	}
 	grpcServer := grpc.NewServer()
+	s.grpcServer = grpcServer
 	pb.RegisterLcacheProServer(grpcServer, s)
 	//健康注册
 	healthServer := health.NewServer()
@@ -90,6 +96,7 @@ func RegisterGroupToServer(group *Group, server *Server) {
 
 func (s *Server) Get(ctx context.Context, req *pb.Request) (*pb.ResponseForGet, error) {
 	peer, ok, self := s.clientPicker.PickPeer(req.Key)
+	fmt.Println("Get: ", peer, ok, self)
 	if !ok || peer == "" {
 		return nil, fmt.Errorf("failed to pick peer")
 	}
