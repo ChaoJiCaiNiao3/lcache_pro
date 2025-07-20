@@ -17,7 +17,9 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
-// Map 一致性哈希实现
+// Map 一致性哈希实现，负责节点管理、负载统计、etcd交互等
+// 支持分布式选主、哈希环同步、动态负载均衡
+// 线程安全，适合多节点分布式场景
 type Map struct {
 	mu sync.RWMutex
 	// 配置信息
@@ -39,13 +41,17 @@ type Map struct {
 	cancel   context.CancelFunc
 }
 
-// 哈希环需要传递给其它节点的数据
+// HashRing 用于哈希环结构的序列化和同步
 type HashRing struct {
 	Keys    []int
 	HashMap map[int]string
 }
 
-// New 创建一致性哈希实例
+// NewConsistentHash 创建一致性哈希实例
+// selfAddr: 本节点地址
+// opts: 可选配置
+// 返回 *Map 实例
+// 启动后自动注册etcd、定时上报负载、发起选主
 func NewConsistentHash(selfAddr string, opts ...Option) *Map {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Map{
@@ -93,7 +99,9 @@ func NewConsistentHash(selfAddr string, opts ...Option) *Map {
 	return m
 }
 
-// 修改 RunElection 支持 context 传递
+// RunElection 分布式选主，成为leader后负责全局哈希环同步和负载均衡
+// ctx: 控制生命周期的context
+// leader节点负责定期同步哈希环和统计信息，follower监听leader变更
 func (m *Map) RunElection(ctx context.Context) error {
 	for {
 		session, err := concurrency.NewSession(m.etcdCli)
@@ -133,7 +141,7 @@ func (m *Map) RunElection(ctx context.Context) error {
 	}
 }
 
-// Option 配置选项
+// Option 配置选项类型，便于扩展
 type Option func(*Map)
 
 func (m *Map) updateNodeCount(ctx context.Context) error {
