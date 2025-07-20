@@ -25,6 +25,7 @@ type Server struct {
 	stopCh       chan struct{} //停止信号
 	singleflight *singleflight.Group
 	redis        *database.Redis
+	grpcServer   *grpc.Server
 }
 
 func NewServer(selfAddr string, svcName string) *Server {
@@ -70,8 +71,12 @@ func (s *Server) Start() error {
 	return nil
 }
 
-func (s *Server) Stop() error {
+func (s *Server) Close() error {
 	close(s.stopCh)
+	s.clientPicker.Close()
+	s.groups.Close()
+	s.redis.RedisClient.Close()
+	s.grpcServer.GracefulStop()
 	return nil
 }
 

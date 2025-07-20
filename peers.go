@@ -75,7 +75,10 @@ func NewClientPicker(selfAddr string, svcName string, consHash *consistenthash.M
 func (p *ClientPicker) Close() error {
 	//上下文关闭grpc连接
 	p.cancel()
+	//关闭etcd连接
 	p.etcdCli.Close()
+	//关闭一致性哈希的连接
+	p.consHash.Close()
 	return nil
 }
 
