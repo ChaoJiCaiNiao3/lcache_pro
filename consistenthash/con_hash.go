@@ -99,7 +99,7 @@ func NewConsistentHash(selfAddr string, opts ...Option) *Map {
 	return m
 }
 
-// RunElection 分布式选主，成为leader后负责全局哈希环同步和负载均衡
+// RunElection 分布式选主，成为leader后负责全局哈希环同步以及负载均衡
 // ctx: 控制生命周期的context
 // leader节点负责定期同步哈希环和统计信息，follower监听leader变更
 func (m *Map) RunElection(ctx context.Context) error {
