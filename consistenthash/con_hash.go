@@ -93,29 +93,31 @@ func (m *Map) RunElection(ctx context.Context) error {
 			return err
 		}
 		election := concurrency.NewElection(session, "/consistenthash/leader")
-		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		//竞选
 		err = election.Campaign(cctx, m.selfAddr)
 		if err == nil {
 			//成为领导了，进行nodeCount的更新和哈希环同步
 			go m.updateNodeCount(ctx)
 			go m.CheckAndRebalanceAndSyncHashRing(ctx)
-		}
-
-		//竞选失败,监听领导者的变化并同步哈希环
-		ch := election.Observe(ctx)
-		go m.updateHashRing(ctx)
-		for {
-			select {
-			case <-ctx.Done():
-				cancel()
-				return ctx.Err()
-			case resp, ok := <-ch:
-				if !ok {
-					time.Sleep(time.Second * 2)
-					break
+			cancel()
+			return nil
+		} else {
+			//竞选失败,监听领导者的变化并同步哈希环
+			ch := election.Observe(ctx)
+			go m.updateHashRing(ctx)
+			for {
+				select {
+				case <-ctx.Done():
+					cancel()
+					return ctx.Err()
+				case resp, ok := <-ch:
+					if !ok {
+						time.Sleep(time.Second * 2)
+						break
+					}
+					fmt.Println("新 leader:", string(resp.Kvs[0].Value))
 				}
-				fmt.Println("新 leader:", string(resp.Kvs[0].Value))
 			}
 		}
 	}

@@ -53,6 +53,7 @@ func NewClientPicker(selfAddr string, svcName string, consHash *consistenthash.M
 		consHash: consHash,
 		ctx:      ctx,
 		cancel:   cancel,
+		grpcCli:  make(map[string]pb.LcacheProClient),
 	}
 	for _, opt := range opts {
 		opt(picker)
