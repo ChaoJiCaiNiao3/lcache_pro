@@ -43,6 +43,9 @@ type PickerOption func(*ClientPicker)
 
 func NewClientPicker(selfAddr string, svcName string, consHash *consistenthash.Map, opts ...PickerOption) (*ClientPicker, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	if consHash == nil {
+		consHash = consistenthash.NewConsistentHash()
+	}
 	picker := &ClientPicker{
 		selfAddr: selfAddr,
 		svcName:  svcName,
@@ -67,6 +70,13 @@ func NewClientPicker(selfAddr string, svcName string, consHash *consistenthash.M
 
 	go picker.startServiceDiscovery()
 	return picker, nil
+}
+
+func (p *ClientPicker) Close() error {
+	//上下文关闭grpc连接
+	p.cancel()
+	p.etcdCli.Close()
+	return nil
 }
 
 func (p *ClientPicker) startServiceDiscovery() error {
@@ -98,6 +108,10 @@ func (p *ClientPicker) fetchAllServices() error {
 			if err != nil {
 				return fmt.Errorf("failed to create grpc client: %v", err)
 			}
+			go func() {
+				<-p.ctx.Done()
+				grpcCli.Close()
+			}()
 			p.grpcCli[addr] = pb.NewLcacheProClient(grpcCli)
 			logrus.Infof("added service: %s", addr)
 		}
@@ -133,6 +147,10 @@ func (p *ClientPicker) handleWatchEvents(events []*clientv3.Event) {
 					logrus.Errorf("failed to create grpc client: %v", err)
 					continue
 				}
+				go func() {
+					<-p.ctx.Done()
+					grpcCli.Close()
+				}()
 				p.grpcCli[addr] = pb.NewLcacheProClient(grpcCli)
 				p.consHash.Add(addr)
 				logrus.Infof("added service: %s", addr)

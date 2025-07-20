@@ -79,7 +79,7 @@ func RegisterPeersToServer(picker *ClientPicker, server *Server) {
 	server.clientPicker = picker
 }
 
-func RegisterGroupToServer(server *Server, group *Group) {
+func RegisterGroupToServer(group *Group, server *Server) {
 	server.groups = group
 }
 

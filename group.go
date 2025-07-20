@@ -20,3 +20,8 @@ func NewGroup(svcName string, selfAddr string, opts store.Options, cacheType sto
 		opts:     opts,
 	}
 }
+
+func (g *Group) Close() error {
+	g.cache.Close()
+	return nil
+}

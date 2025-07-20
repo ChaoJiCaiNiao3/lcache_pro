@@ -32,6 +32,8 @@ type Map struct {
 	//etcd相关
 	selfAddr string
 	etcdCli  *clientv3.Client
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // 哈希环需要传递给其它节点的数据
@@ -42,11 +44,14 @@ type HashRing struct {
 
 // New 创建一致性哈希实例
 func NewConsistentHash(opts ...Option) *Map {
+	ctx, cancel := context.WithCancel(context.Background())
 	m := &Map{
 		config:       DefaultConfig,
 		hashMap:      make(map[int]string),
 		nodeReplicas: make(map[string]int),
 		nodeCounts:   make(map[string]int64),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	for _, opt := range opts {
@@ -62,28 +67,35 @@ func NewConsistentHash(opts ...Option) *Map {
 	}
 	m.etcdCli = etcdCli
 
-	//etcdClient来向etcd中传送自己的负载统计
+	// etcdClient来向etcd中传送自己的负载统计
 	go func() {
+		ticker := time.NewTicker(time.Second * 10)
+		defer ticker.Stop()
 		for {
-			time.Sleep(time.Second * 10)
-			registry.PutEtcdConHashNodeCount(m.etcdCli, m.selfAddr, m.nodeCounts[m.selfAddr])
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				registry.PutEtcdConHashNodeCount(m.etcdCli, m.selfAddr, m.nodeCounts[m.selfAddr])
+			}
 		}
 	}()
-	//etcdClient发起竞选
-	go m.RunElection()
+	// etcdClient发起竞选
+	go m.RunElection(ctx)
 	return m
 }
 
-func (m *Map) RunElection() error {
+// 修改 RunElection 支持 context 传递
+func (m *Map) RunElection(ctx context.Context) error {
 	for {
 		session, err := concurrency.NewSession(m.etcdCli)
 		if err != nil {
 			return err
 		}
 		election := concurrency.NewElection(session, "/consistenthash/leader")
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		//竞选
-		err = election.Campaign(ctx, m.selfAddr)
+		err = election.Campaign(cctx, m.selfAddr)
 		if err == nil {
 			//成为领导了，进行nodeCount的更新和哈希环同步
 			go m.updateNodeCount(ctx)
@@ -93,11 +105,18 @@ func (m *Map) RunElection() error {
 		//竞选失败,监听领导者的变化并同步哈希环
 		ch := election.Observe(ctx)
 		go m.updateHashRing(ctx)
-		for resp := range ch {
-			// 只要有 leader 变更，这里会收到消息
-			fmt.Println("新 leader:", string(resp.Kvs[0].Value))
+		for {
+			select {
+			case <-ctx.Done():
+				cancel()
+				return ctx.Err()
+			case resp, ok := <-ch:
+				if !ok {
+					break
+				}
+				fmt.Println("新 leader:", string(resp.Kvs[0].Value))
+			}
 		}
-		cancel()
 		time.Sleep(time.Second)
 	}
 }
@@ -329,6 +348,16 @@ func (m *Map) rebalanceReplicas(addr string, newReplicas int) error {
 	err = m.addNode(addr, newReplicas)
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+func (m *Map) Close() error {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	if m.etcdCli != nil {
+		m.etcdCli.Close()
 	}
 	return nil
 }
