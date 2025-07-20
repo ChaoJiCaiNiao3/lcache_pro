@@ -9,7 +9,7 @@ services:
     restart: always
 
   etcd:
-    image: quay.io/coreos/etcd:v3.5.13
+    image: bitnami/etcd:3.5.14
     container_name: etcd
     ports:
       - "2379:2379"
@@ -20,5 +20,6 @@ services:
       - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
       - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://0.0.0.0:2380
       - ETCD_INITIAL_CLUSTER=default=http://0.0.0.0:2380
+      - ALLOW_NONE_AUTHENTICATION=yes
       - ETCD_NAME=default
     restart: always
