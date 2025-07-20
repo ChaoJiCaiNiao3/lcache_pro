@@ -91,13 +91,20 @@ func (s *Server) Get(ctx context.Context, req *pb.Request) (*pb.ResponseForGet, 
 	if self {
 		value, ok := s.groups.cache.Get(req.Key)
 		if !ok {
-			//没找到，那么从数据库拿
-			value, err := s.redis.Get(req.Key)
+			//没找到，单飞从数据库拿
+			value, err := s.singleflight.Do(req.Key, func() (interface{}, error) {
+				value, err := s.redis.Get(req.Key)
+				if err != nil {
+					logrus.Errorf("failed to get: %v", err)
+					return nil, fmt.Errorf("failed to get: %v", err)
+				}
+				return ByteView(value), nil
+			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to get: %v", err)
 			}
-			s.groups.cache.Set(req.Key, ByteView(value))
-			return &pb.ResponseForGet{Value: ByteView(value)}, nil
+			s.groups.cache.Set(req.Key, value.(ByteView))
+			return &pb.ResponseForGet{Value: value.(ByteView)}, nil
 		}
 		return &pb.ResponseForGet{Value: value.(ByteView)}, nil
 	} else {
