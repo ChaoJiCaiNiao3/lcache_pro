@@ -328,9 +328,11 @@ func (m *Map) checkAndRebalance() (error, bool) {
 		total += val
 	}
 
-	avg := total / int64(len(m.nodeCounts))
-
 	IsRebalance := false
+	avg := total / int64(len(m.nodeCounts))
+	if avg == 0 {
+		return nil, IsRebalance
+	}
 	for addr, val := range m.nodeCounts {
 		newReplicas := m.nodeReplicas[m.selfAddr]
 		flag := false
