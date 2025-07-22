@@ -68,7 +68,7 @@ go run cacheTest/main.go
 | `get`     | 从缓存和 Redis 获取指定 key 的值      |
 | `set`     | 将 key-value 存入缓存和 Redis         |
 | `delete`  | 从缓存和 Redis 删除指定 key           |
-| `set_hot` | 只存入本地缓存                       |
+| `set_hot` | 热点数据存入缓存                      |
 | `exit`    | 关闭服务                             |
 
 ---
