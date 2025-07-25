@@ -120,18 +120,12 @@ func (s *Server) Get(ctx context.Context, req *pb.Request) (*pb.ResponseForGet, 
 		}
 		return &pb.ResponseForGet{Value: value.(ByteView)}, nil
 	} else {
-		//单飞从远程节点拿
-		value, err := s.singleflight.Do(req.Key, func() (interface{}, error) {
-			resp, err := s.clientPicker.grpcCli[peer].Get(context.Background(), req)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get: %v", err)
-			}
-			return resp, nil
-		})
+		//从远程节点拿
+		resp, err := s.clientPicker.grpcCli[peer].Get(context.Background(), req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get: %v", err)
 		}
-		return value.(*pb.ResponseForGet), nil
+		return resp, nil
 	}
 }
 
