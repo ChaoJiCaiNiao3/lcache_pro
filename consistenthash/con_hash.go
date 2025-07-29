@@ -113,11 +113,24 @@ func (m *Map) RunElection(ctx context.Context) error {
 		//竞选
 		err = election.Campaign(cctx, m.selfAddr)
 		if err == nil {
-			//成为领导了，进行nodeCount的更新和哈希环同步(只有挂了才会换人，所有不会进入下一个for循环,所以不需要cancel)
-			go m.updateNodeCount(ctx)
-			go m.CheckAndRebalanceAndSyncHashRing(ctx)
+			// 成为leader后，监听session.Done()，主动退休
+			leaderCtx, leaderCancel := context.WithCancel(ctx)
+			go func() {
+				select {
+				case <-session.Done():
+					// etcd session失效，主动退休
+					leaderCancel()
+				case <-ctx.Done():
+					leaderCancel()
+				}
+			}()
+			go m.updateNodeCount(leaderCtx)
+			go m.CheckAndRebalanceAndSyncHashRing(leaderCtx)
 			cancel()
-			return nil
+			// 等待leaderCtx结束后再重新参与选主
+			<-leaderCtx.Done()
+			// 这里可以加日志：主动退休，重新参与选主
+			continue
 		} else {
 			//竞选失败,监听领导者的变化并同步哈希环
 			cctx, cancel = context.WithCancel(ctx)
